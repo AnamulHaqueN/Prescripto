@@ -1,8 +1,15 @@
 import mongoose from "mongoose";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const connectDB = async () => {
-    mongoose.connection.on('connected', () => console.log("Database Connected "))
-    await mongoose.connect(`${process.env.MONGODB_URI}/prescripto`)
-}
+  mongoose.connection.on('connected', () => console.log("✅ Database Connected"));
 
-export default connectDB
+  await mongoose.connect(process.env.MONGO_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  });
+};
+
+export default connectDB;

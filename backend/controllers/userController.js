@@ -5,6 +5,8 @@ import doctorModel from '../models/doctorModel.js'
 import jwt from 'jsonwebtoken'
 import {v2 as cloudinary} from 'cloudinary'
 import appointmentModel from '../models/appointmentModel.js'
+import axios from 'axios'
+import qs from "qs";
 
 // API to register user
 const registerUser = async (req, res) => {
@@ -242,4 +244,86 @@ const cancelAppointment = async (req, res) => {
 
 }
 
-export {registerUser, loginUser, getProfile, updateProfile, bookAppointment, listAppointment, cancelAppointment}
+// API to make payment of appointment using AmarPay
+
+// ✅ POST /api/user/payment-amarpay
+const paymentAmarpay = async (req, res) => {
+  try {
+    const { appointmentId } = req.body;
+    const appointmentData = await appointmentModel.findById(appointmentId);
+
+    if (!appointmentData || appointmentData.cancelled) {
+      return res.json({ success: false, message: "Appointment not found or cancelled." });
+    }
+
+    const paymentPayload = {
+        store_id: process.env.AMARPAY_KEY_ID,
+        signature_key: process.env.AMARPAY_KEY_SECRET,
+        tran_id: `TRX-${Date.now()}`,
+        amount: appointmentData.amount.toString(), // MUST be string
+        currency: process.env.CURRENCY || "BDT",
+        desc: "Doctor Appointment Payment",
+        cus_name: appointmentData.userData.name,
+        cus_email: appointmentData.userData.email,
+        cus_phone: appointmentData.userData.phone || "01700000000",
+        cus_add1: "Dhaka",
+        cus_city: "Dhaka",
+        cus_country: "Bangladesh",
+        success_url: `${process.env.BACKEND_URL}/api/user/payment-success-callback`,
+        fail_url: `${process.env.FRONTEND_URL}/payment-fail`,
+        cancel_url: `${process.env.FRONTEND_URL}/payment-cancel`,
+        type: "json",
+        opt_a: appointmentId,
+    };
+
+    //console.log("AmarPay JSON payload:", paymentPayload);
+
+    const response = await axios.post(
+        "https://sandbox.aamarpay.com/jsonpost.php",
+        paymentPayload,
+        {
+            headers: {
+            "Content-Type": "application/json", // critical for JSON body
+            },
+        }
+    );
+
+    //console.log("AmarPay response:", response.data);
+
+
+    if (response.data && response.data.payment_url) {
+        res.json({ success: true, paymentUrl: response.data.payment_url });
+        } else {
+        res.json({ success: false, message: "Failed to generate payment link." });
+        }
+    } catch (error) {
+        console.log(error);
+        res.json({ success: false, message: error.message });
+    }
+};
+
+
+// ✅ GET /api/user/payment-success-callback
+const paymentSuccessCallback = async (req, res) => {
+  try {
+    const { opt_a, pay_status } = req.body;
+    // console.log("AmarPay callback data:", req.body);
+
+    if (!opt_a) {
+      return res.send("Invalid callback: missing appointment ID.");
+    }
+
+    if (pay_status && pay_status.toLowerCase() === "successful") {
+      await appointmentModel.findByIdAndUpdate(opt_a, { payment: true });
+    }
+
+    return res.redirect(`${process.env.FRONTEND_URL}/payment-success`);
+  } catch (error) {
+    console.error(error);
+    return res.send("Payment verification failed: " + error.message);
+  }
+};
+
+
+
+export {registerUser, loginUser, getProfile, updateProfile, bookAppointment, listAppointment, cancelAppointment, paymentAmarpay, paymentSuccessCallback}
