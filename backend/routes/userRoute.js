@@ -13,6 +13,8 @@ userRouter.post('/update-profile', upload.single('image'), authUser, updateProfi
 userRouter.post('/book-appointment', authUser, bookAppointment)
 userRouter.get('/appointments', authUser, listAppointment)
 
+userRouter.post('/cancel-appointment', authUser, cancelAppointment);
+
 userRouter.post('/payment-amarpay', authUser, paymentAmarpay);
 userRouter.get('/payment-success-callback', paymentSuccessCallback);
 userRouter.post('/payment-success-callback', paymentSuccessCallback);
