@@ -1,5 +1,7 @@
 import express from 'express'
 import { registerUser, loginUser, getProfile, updateProfile, bookAppointment, listAppointment, cancelAppointment, paymentAmarpay , paymentSuccessCallback } from '../controllers/userController.js'
+import { getUserNotifications } from '../controllers/notificationController.js'
+
 import authUser from '../middlewares/authUser.js'
 import upload from '../middlewares/multer.js'
 
@@ -19,5 +21,6 @@ userRouter.post('/payment-amarpay', authUser, paymentAmarpay);
 userRouter.get('/payment-success-callback', paymentSuccessCallback);
 userRouter.post('/payment-success-callback', paymentSuccessCallback);
 
+userRouter.get('/notifications', authUser, getUserNotifications)
 
 export default userRouter

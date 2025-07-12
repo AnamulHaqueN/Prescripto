@@ -2,6 +2,7 @@ import validator from 'validator'
 import bcrypt from 'bcrypt'
 import userModel from '../models/userModel.js'
 import doctorModel from '../models/doctorModel.js'
+import notificationModel from '../models/notificationModel.js';
 import jwt from 'jsonwebtoken'
 import {v2 as cloudinary} from 'cloudinary'
 import appointmentModel from '../models/appointmentModel.js'
@@ -130,7 +131,7 @@ const updateProfile = async (req, res) => {
 
 // API to book appointment
 // Updated bookAppointment with auto-shift logic for normal appointments
-// API to book appointment with recursive shifting for emergency
+
 const bookAppointment = async (req, res) => {
   try {
     const userId = req.userId;
@@ -153,88 +154,77 @@ const bookAppointment = async (req, res) => {
 
     const slotInfo = slot_booked[slotDate][slotTime];
 
-    // If slot already booked by an emergency appointment, reject all bookings
+    // If already booked as emergency, block any booking
     if (slotInfo && slotInfo.emergency) {
       return res.json({ success: false, message: "Slot not available - emergency booked" });
     }
 
-    const allSlots = [
-      "10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM",
-      "12:00 PM", "12:30 PM", "01:00 PM", "01:30 PM",
-      "02:00 PM", "02:30 PM", "03:00 PM", "03:30 PM",
-      "04:00 PM", "04:30 PM", "05:00 PM"
-    ];
-
-    // Recursive function to shift appointments forward if needed
-    const shiftAppointment = async (docId, slotDate, slotTime) => {
-    const appts = await appointmentModel.find({
-      docId,
-      slotDate,
-      slotTime,
-      cancelled: false,
-      isEmergency: false,
-    });
-
-    if (appts.length === 0) return true;
-
-    const currentIndex = allSlots.indexOf(slotTime);
-    if (currentIndex === -1) throw new Error("Invalid slot time");
-
-    const nextSlotIndex = currentIndex + 1;
-    if (nextSlotIndex >= allSlots.length) {
-      throw new Error("No more slots available to shift");
-    }
-
-    const nextSlot = allSlots[nextSlotIndex];
-
-    // Check if next slot is occupied by appointment or slot_booked
-    const clash = await appointmentModel.findOne({
-      docId,
-      slotDate,
-      slotTime: nextSlot,
-      cancelled: false,
-    });
-
-    if (clash || (slot_booked[slotDate] && slot_booked[slotDate][nextSlot])) {
-      // Need to shift next slot first recursively
-      await shiftAppointment(docId, slotDate, nextSlot);
-    }
-
-    // Move all appointments on current slot to next slot
-    for (const appt of appts) {
-      await appointmentModel.findByIdAndUpdate(appt._id, { slotTime: nextSlot });
-
-      // Update slot_booked: free old slot and book new slot only once
-      if (slot_booked[slotDate]) {
-        // Delete old slot key ONLY if all appointments at old slot are shifted
-        delete slot_booked[slotDate][slotTime];
-        slot_booked[slotDate][nextSlot] = { emergency: false };
-
-        // Save updated slot_booked to doctor model here
-        await doctorModel.findByIdAndUpdate(docId, { slot_booked });
-      }
-    }
-    return true;
-  }
-
-    // If emergency and slot already booked normally, shift those appointments
+    // If emergency appointment, and slot booked normally, shift normal appointments
     if (slotInfo && emergencyFlag) {
-      try {
-        await shiftAppointment(docId, slotDate, slotTime);
-      } catch (err) {
-        return res.json({ success: false, message: err.message });
+      const existingAppointments = await appointmentModel.find({
+        docId,
+        slotDate,
+        slotTime,
+        cancelled: false
+      });
+
+      const allSlots = [
+        "10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM",
+        "12:00 PM", "12:30 PM", "01:00 PM", "01:30 PM",
+        "02:00 PM", "02:30 PM", "03:00 PM", "03:30 PM",
+        "04:00 PM", "04:30 PM", "05:00 PM"
+      ];
+
+      const currentIndex = allSlots.indexOf(slotTime);
+
+      for (let appt of existingAppointments) {
+        if (!appt.isEmergency) {
+          const nextSlot = allSlots[currentIndex + 1];
+
+          if (!nextSlot) {
+            return res.json({ success: false, message: "No available next slot to shift appointment" });
+          }
+
+          const clash = await appointmentModel.findOne({
+            docId,
+            slotDate,
+            slotTime: nextSlot,
+            cancelled: false
+          });
+
+          if (!clash) {
+            await appointmentModel.findByIdAndUpdate(appt._id, {
+              slotTime: nextSlot
+            });
+            slot_booked[slotDate][nextSlot] = { emergency: false };
+            delete slot_booked[slotDate][slotTime];
+
+            // Notify user about the shift
+            const user = await userModel.findById(appt.userId);
+            if (user) {
+              const msg = `Your appointment on ${slotDate} has been shifted from ${slotTime} to ${nextSlot} due to an emergency booking.`;
+              await notificationModel.create({
+                userId: user._id,
+                message: msg,
+                date: new Date()
+              });
+            }
+
+          } else {
+            return res.json({ success: false, message: `Next slot ${nextSlot} already occupied.` });
+          }
+        }
       }
     }
 
-    // If normal booking and slot already taken, reject
+    // For normal booking, if slot already taken, reject
     if (slotInfo && !emergencyFlag) {
       return res.json({ success: false, message: "Slot not available" });
     }
 
-    // Mark slot booked in doctor's record
+    // Save emergency slot
     slot_booked[slotDate][slotTime] = { emergency: emergencyFlag };
 
-    // Get user and doctor data (excluding password)
     const userData = await userModel.findById(userId).select('-password');
     delete docData.slot_booked;
 
@@ -253,16 +243,17 @@ const bookAppointment = async (req, res) => {
     const newAppointment = new appointmentModel(appointmentData);
     await newAppointment.save();
 
-    // Update doctor's slot_booked map
+    // Save new slot data in docData
     await doctorModel.findByIdAndUpdate(docId, { slot_booked });
 
-    return res.json({ success: true, message: "Appointment Booked" });
+    res.json({ success: true, message: 'Appointment Booked' });
 
   } catch (error) {
-    console.error(error);
-    return res.json({ success: false, message: error.message });
+    console.log(error);
+    res.json({ success: false, message: error.message });
   }
 }
+
 
 
 
