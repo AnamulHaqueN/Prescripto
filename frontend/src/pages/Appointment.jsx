@@ -358,7 +358,7 @@ const Appointment = () => {
             <p className='text-sm text-gray-500 max-w-[700px] mt-1' >{docInfo.about}</p>
           </div>
           <p className='text-gray-500 font-medium mt-4' >
-            Appointment fee: <span className='text-gray-600'>{currencySymbol} {docInfo.fees}</span>
+            Appointment fee: <span className='text-gray-600'>{docInfo.fees} {currencySymbol}</span>
           </p>
         </div>
       </div>
@@ -371,7 +371,7 @@ const Appointment = () => {
             onChange={(e) => setIsEmergency(e.target.checked)}
             className="w-4 h-4"
           />
-          <span className='text-sm'>Book as Emergency Appointment (Override if already booked)</span>
+          <span className='text-sm'>Book as Emergency Appointment</span>
         </label>
 
         <p>Booking slots</p>
